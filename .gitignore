@@ -1,5 +1,6 @@
 chromedriver.exe
 login.py
-venv
-__pycache__
-.idea
+debug.txt
+/venv
+/__pycache__
+/.idea
