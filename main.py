@@ -11,7 +11,7 @@ import requests
 import urllib
 from threading import Timer
 
-time_to_sell = 300.0 #default 1800.0
+time_to_sell = 1800.0 #default 1800.0
 
 
 # assert "Robinhood" in browser.title
@@ -34,7 +34,7 @@ def main():
     chrome_options = Options()
     chrome_options.add_experimental_option("detach", True)
 
-    browser = webdriver.Chrome(executable_path="C:\\Users\\mutia\\Desktop\\qf\\chromedriver.exe", chrome_options=chrome_options)
+    browser = webdriver.Chrome(executable_path=path, chrome_options=chrome_options)
     browser.get("https://members.blackboxstocks.com/blackbox")
     login(browser)
 
@@ -53,14 +53,30 @@ def main():
     browser.find_element_by_id("menuItemOptions").click()
 
     cur = ""
+    updated = 0 # if looking at new ticker
     while True:
-        next = browser.find_element_by_xpath(f'//*[@id="alertStreamBody"]/tr[{1}]').text
+        # search for next stock to buy
+        try:
+            next = browser.find_element_by_xpath(f'//*[@id="alertStreamBody"]/tr[{1}]').text
+        except Exception as e:
+            print("search error")
+            try:
+                browser.find_element_by_id("loadSymbolOptionsFromMi").clear()
+                browser.find_element_by_xpath('//*[@id="alertStreamFiltered"]/span[1]/a').click()
+                browser.find_element_by_xpath('//*[@id="optionsFiltered"]/span[1]/a').click()
+                updated = 0
+            except Exception as e:
+                    print("reset error at search")
+            continue
+
         if cur != next:
             cur = next
+            updated = 1
             ticker = cur.split()[1]
+            print(f"getting data for {ticker}")
 
             # filter
-            filter = "AAPL"
+            filter = ticker
             temp = browser.find_element_by_id("loadSymbolOptionsFromMi")
             temp.send_keys(filter)
             temp.send_keys(Keys.RETURN)
@@ -74,35 +90,46 @@ def main():
             for trade in optionsBody:
                 data = trade.split()
                 try:
-                    print(data[1], data[4], data[8], data)
+                    # print(data[1], data[4], data[8], data)
                     if data[4] == 'CALL':
                         if data[8][-1] == 'K':
-
                             call_vol += float(data[8][1:-1])*1000
+                        if data[8][-1] == 'M':
+                            call_vol += float(data[8][1:-1]) * 1000000
                     else:
                         if data[8][-1] == 'K':
                             put_vol += float(data[8][1:-1])*1000
+                        if data[8][-1] == 'M':
+                            call_vol += float(data[8][1:-1])*1000000
                 except Exception as e:
+                    print(f'get data error for {ticker}')
                     break
 
-            if call_vol/(call_vol+put_vol) > .7:
+            if call_vol+put_vol == 0:
+                print(f"NO VOLUME for {ticker}")
+                continue
+            elif call_vol/(call_vol+put_vol) > .7:
                 # buy, temporary write to file
                 file = open("log.txt", "a")
                 file.write(f"Buy {ticker} @ {query(ticker)}\n")
                 file.close()
+                print(f"Buy {ticker} @ {query(ticker)}\n")
 
                 # sell in 30 mins, temporary write to file
                 t = Timer(time_to_sell, timer_query, args=[ticker])
                 t.start()
+            else:
+                print(f"call_vol {call_vol}, put_vol {put_vol}, percent {call_vol/(call_vol+put_vol)}")
 
-        browser.find_element_by_xpath('//*[@id="alertStreamFiltered"]/span[1]/a').click()
-
-            # # unfilter
-            # time.sleep(10)
-            # browser.find_element_by_id("loadSymbolOptionsFromMi").clear()
-            # browser.find_element_by_xpath('//*[@id="alertStreamFiltered"]/span[1]/a').click()
-            # browser.find_element_by_xpath('//*[@id="optionsFiltered"]/span[1]/a').click()
-            # print(ticker)
+        if updated:
+            try:
+                browser.find_element_by_id("loadSymbolOptionsFromMi").clear()
+                browser.find_element_by_xpath('//*[@id="alertStreamFiltered"]/span[1]/a').click()
+                browser.find_element_by_xpath('//*[@id="optionsFiltered"]/span[1]/a').click()
+                updated = 0
+            except Exception as e:
+                    print("reset error at reset")
+        time.sleep(1)
 
     # browser.find_element_by_id("optionsFilter").click()
     # time.sleep(1)
@@ -166,13 +193,11 @@ def auth():
 
     # enter username, password
     temp = browser.find_element_by_id("username0")
-    temp.send_keys("jamesqu3")
+    temp.send_keys(td_api_user)
     temp = browser.find_element_by_id("password1")
-    temp.send_keys("Memer123!")
+    temp.send_keys(td_api_pass)
     temp.send_keys(Keys.RETURN)
     browser.find_element_by_id('accept').click()
-
-    # code = 99DrinK4riYWOY2lgr9iEjj4PzO8NZa5Dl0kXBfynDnpgUyEK3X2Dn0g3nNfRT%2FgXG9Hp5wZopZAqTO8e8GDLf6dqUspmHO5vmwxRvO1MpDuzukUik9usO0VVd2VJdk%2BH1qLAIPipwv9cJTcm3o0m3Nm5mITvFlmO4hcQzYp48qM0diEbtj4tpmMu8h2jE2w%2FOaG2j17wXLWYU0Pm3igq8%2FphvrdCslsrjmojOah31itQ2CyxDjfqWGdzEzXsITVjjiFpkRqyIoSH2K2KyJEtu6AZNT0GnPrWLnz22iw9J126gbvvkHuiaNXdwCKw70P8sdq90%2BddKzYbkv0ALim8Fvy1GjD482QsMrOmebGxTeGMplWEKbIp2K2NJEsm1LBBe3%2FF3pztqbIJrH29WjaGolgnjw38fnP4Y5jZ2WunOIyUXln%2B%2FTNGgs4xl2100MQuG4LYrgoVi%2FJHHvlf%2BQ9gzV%2FFTAUdNZJ9VVbQYZvsecQxhWRj%2BopIjzM6QU5j%2FbOzX%2Fc%2FyAMjRyQQpjRY1lpAZO%2B1v9skdyL3SgZOIKpyYU4Ec1FJg2nZTaDW1Zmc10mTt%2B2ksKUQtK7xBqJN%2FTDphxandMlRCrdngZAA6VN8NmP2ndkgZJdjXlHQ28s6W%2B%2Fo6d8jE5BENIMC5FItk9aRH9CXz2tZK8sOXRbCFxlt3Ev%2BSqcSMDrBxn4b%2BmhPteJAq3e49wESlyRAurn33BFOnUckU%2BpSGpQXOa0Bmt47JJQz4jxoAppxonAVPk7bxCpR%2FRwFtpBVa8uxCP0fTbml%2BzZO87M14wVn%2BiBH2DxKjvj2rKZLIuMFQel6r9L6a48soodX%2Bqchz2dViJfgf8rgeLNm%2BRGbzMuIrSF5o4%2FGcVlpfgp8%2Baz1wXSUzVZbWv4VYTvNxedb6Q%3D212FD3x19z9sWBHDJACbC00B75E
 
 
 main()
