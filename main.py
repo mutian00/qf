@@ -31,6 +31,10 @@ def exit():
     driver.quit()
 
 def main():
+    # TODO: add time constraints (stop buying after 3:30 cause can't sell)
+    # https://stackoverflow.com/questions/30896110/in-python-check-if-current-time-is-less-than-specific-time/30896304
+
+
     chrome_options = Options()
     chrome_options.add_experimental_option("detach", True)
 
