@@ -10,9 +10,11 @@ import time
 import requests
 import urllib
 from threading import Timer
+from datetime import datetime
 
 time_to_sell = 1800.0 #default 1800.0
-
+# log_path = "log.txt"
+log_path = "test.txt"
 
 # assert "Robinhood" in browser.title
 
@@ -34,7 +36,6 @@ def main():
     # TODO: add time constraints (stop buying after 3:30 cause can't sell)
     # https://stackoverflow.com/questions/30896110/in-python-check-if-current-time-is-less-than-specific-time/30896304
 
-
     chrome_options = Options()
     chrome_options.add_experimental_option("detach", True)
 
@@ -51,14 +52,24 @@ def main():
     browser.find_element_by_id("spanAlertStreamFilters").click()
     time.sleep(1)
     browser.find_element_by_id("chkAlertStreamBlock").click()
-    browser.find_element_by_id("chkAlertStream52WeekLow").click()
+    # browser.find_element_by_id("chkAlertStream52WeekLow").click()
     browser.find_element_by_id("chkAlertStreamAll").click()
     browser.find_element_by_xpath('//*[@id="alertStreamFilters"]/div/div/div[3]/button[1]').click()
     browser.find_element_by_id("menuItemOptions").click()
 
     cur = ""
+    last_bought = ""
     updated = 0 # if looking at new ticker
     while True:
+        # check if markets open
+        cur_time = datetime.now().time()
+        cur_h = cur_time.hour
+        cur_m = cur_time.minute/60
+
+        if cur_h+cur_m <= 9.5 or cur_h+cur_m >= 16:
+            print(f"{cur_time}, market not open")
+            break
+
         # search for next stock to buy
         try:
             next = browser.find_element_by_xpath(f'//*[@id="alertStreamBody"]/tr[{1}]').text
@@ -73,7 +84,7 @@ def main():
                     print("reset error at search")
             continue
 
-        if cur != next:
+        if cur != next and cur != last_bought:
             cur = next
             updated = 1
             ticker = cur.split()[1]
@@ -114,10 +125,11 @@ def main():
                 continue
             elif call_vol/(call_vol+put_vol) > .7:
                 # buy, temporary write to file
-                file = open("log.txt", "a")
+                file = open(log_path, "a")
                 file.write(f"Buy {ticker} @ {query(ticker)}\n")
                 file.close()
                 print(f"Buy {ticker} @ {query(ticker)}\n")
+                last_bought = ticker
 
                 # sell in 30 mins, temporary write to file
                 t = Timer(time_to_sell, timer_query, args=[ticker])
@@ -157,7 +169,7 @@ def timer_query(symbol):
     content = requests.get(url=endpoint, params=payload).json() #headers=headers
     last_price = content[symbol]['lastPrice']
 
-    file = open("log.txt", "a")
+    file = open(log_path, "a")
     file.write(f"Sell {symbol} @ {query(symbol)}\n")
     file.close()
 
@@ -207,7 +219,6 @@ def auth():
 main()
 # api_call_eg()
 # auth()
-
 
 #print stuff test
 # # for row in rows:
