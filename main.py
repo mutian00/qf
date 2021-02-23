@@ -57,8 +57,7 @@ def main():
     browser.find_element_by_xpath('//*[@id="alertStreamFilters"]/div/div/div[3]/button[1]').click()
     browser.find_element_by_id("menuItemOptions").click()
 
-    cur = ""
-    last_bought = ""
+    cur_ticker = ""
     updated = 0 # if looking at new ticker
     while True:
         # check if markets open
@@ -66,13 +65,14 @@ def main():
         cur_h = cur_time.hour
         cur_m = cur_time.minute/60
 
-        if cur_h+cur_m <= 9.5 or cur_h+cur_m >= 16:
+        if cur_h+cur_m <= 9.5 or cur_h+cur_m >= 15.5:
             print(f"{cur_time}, market not open")
-            break
+            continue
 
         # search for next stock to buy
         try:
             next = browser.find_element_by_xpath(f'//*[@id="alertStreamBody"]/tr[{1}]').text
+            next_ticker = next.split()[1]
         except Exception as e:
             print("search error")
             try:
@@ -84,14 +84,13 @@ def main():
                     print("reset error at search")
             continue
 
-        if cur != next and cur != last_bought:
-            cur = next
+        if next_ticker != cur_ticker:
+            cur_ticker = next_ticker
             updated = 1
-            ticker = cur.split()[1]
-            print(f"getting data for {ticker}")
+            print(f"getting data for {cur_ticker}")
 
             # filter
-            filter = ticker
+            filter = cur_ticker
             temp = browser.find_element_by_id("loadSymbolOptionsFromMi")
             temp.send_keys(filter)
             temp.send_keys(Keys.RETURN)
@@ -117,22 +116,21 @@ def main():
                         if data[8][-1] == 'M':
                             call_vol += float(data[8][1:-1])*1000000
                 except Exception as e:
-                    print(f'get data error for {ticker}')
+                    print(f'get data error for {cur_ticker}')
                     break
 
             if call_vol+put_vol == 0:
-                print(f"NO VOLUME for {ticker}")
+                print(f"NO VOLUME for {cur_ticker}")
                 continue
             elif call_vol/(call_vol+put_vol) > .7:
                 # buy, temporary write to file
                 file = open(log_path, "a")
-                file.write(f"Buy {ticker} @ {query(ticker)}\n")
+                file.write(f"Buy {cur_ticker} @ {query(cur_ticker)}\n")
                 file.close()
-                print(f"Buy {ticker} @ {query(ticker)}\n")
-                last_bought = ticker
+                print(f"Buy {cur_ticker} @ {query(cur_ticker)}\n")
 
                 # sell in 30 mins, temporary write to file
-                t = Timer(time_to_sell, timer_query, args=[ticker])
+                t = Timer(time_to_sell, timer_query, args=[cur_ticker])
                 t.start()
             else:
                 print(f"call_vol {call_vol}, put_vol {put_vol}, percent {call_vol/(call_vol+put_vol)}")
