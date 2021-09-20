@@ -12,6 +12,16 @@ import urllib
 from threading import Timer
 from datetime import datetime
 
+import os
+
+import email
+import smtplib
+import ssl
+from email import encoders
+from email.mime.base import MIMEBase
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 time_to_sell = 1800.0 #default 1800.0
 # log_path = "log.txt"
 log_path = "test.txt"
@@ -59,6 +69,7 @@ def main():
 
     cur_ticker = ""
     updated = 0 # if looking at new ticker
+    email_results = False
     while True:
         # check if markets open
         cur_time = datetime.now().time()
@@ -67,7 +78,21 @@ def main():
 
         if cur_h+cur_m <= 9.5 or cur_h+cur_m >= 15.5:
             print(f"{cur_time}, market not open")
+
+            # email results at end of day
+            if not email_results:
+                email_results = True
+                print("emailing results")
+                email(log_path)
+                print("clearing log")
+                os.remove(log_path)
+                print("sleeping")
+                time.sleep(60 * 60 * 17) # sleep overnight
+                # email to james
+            time.sleep(5) # sleep for 30 sec while waiting for market open
             continue
+
+        email_results = False # if market open again, need to email results
 
         # search for next stock to buy
         try:
@@ -81,7 +106,7 @@ def main():
                 browser.find_element_by_xpath('//*[@id="optionsFiltered"]/span[1]/a').click()
                 updated = 0
             except Exception as e:
-                    print("reset error at search")
+                print("reset error at search")
             continue
 
         if next_ticker != cur_ticker:
@@ -142,7 +167,7 @@ def main():
                 browser.find_element_by_xpath('//*[@id="optionsFiltered"]/span[1]/a').click()
                 updated = 0
             except Exception as e:
-                    print("reset error at reset")
+                print("reset error at reset")
         time.sleep(1)
 
     # browser.find_element_by_id("optionsFilter").click()
@@ -170,7 +195,6 @@ def timer_query(symbol):
     file = open(log_path, "a")
     file.write(f"Sell {symbol} @ {query(symbol)}\n")
     file.close()
-
 
 def api_call_eg():
     symbol = "GME"
@@ -213,6 +237,44 @@ def auth():
     temp.send_keys(Keys.RETURN)
     browser.find_element_by_id('accept').click()
 
+def email(file):
+    sender_email = "qfthesis2022@gmail.com"
+    dest_email = "qfthesis2022+1@gmail.com"
+    password = email_pass
+
+    # create multipart email
+    message = MIMEMultipart()
+    message["Subject"] = "Daily Log"
+    message["From"] = sender_email
+    message["To"] = dest_email
+
+    filename = file
+
+    # Open file in binary mode
+    with open(filename, "rb") as attachment:
+        # Add file as application/octet-stream
+        # Email client can usually download this automatically as attachment
+        part = MIMEBase("application", "octet-stream")
+        part.set_payload(attachment.read())
+
+    # Encode file in ASCII characters to send by email
+    encoders.encode_base64(part)
+
+    # Add header as key/value pair to attachment part
+    part.add_header(
+        "Content-Disposition",
+        f"attachment; filename= {filename}",
+    )
+
+    # Add attachment to message and convert message to string
+    message.attach(part)
+    text = message.as_string()
+
+    # Log in to server using secure context and send email
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+        server.login(sender_email, password)
+        server.sendmail(sender_email, dest_email, text)
 
 main()
 # api_call_eg()
