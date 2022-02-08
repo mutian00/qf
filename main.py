@@ -13,6 +13,7 @@ from threading import Timer
 from datetime import datetime
 
 import os
+import math
 
 import email
 import smtplib
@@ -22,9 +23,17 @@ from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-time_to_sell = 1800.0 #default 1800.0
+time_to_sell = 900.0 #default 1800.0
 # log_path = "log.txt"
 log_path = "test.txt"
+access_token = ""
+## TD set up below
+perTransaction = 200
+slipAdjust = 0.02
+minPrice = 8
+stopPercent = 0.998
+shares = 0
+volPercent = 0.05
 
 # assert "Robinhood" in browser.title
 
@@ -64,7 +73,9 @@ def main():
     browser.find_element_by_id("chkAlertStreamBlock").click()
     # browser.find_element_by_id("chkAlertStream52WeekLow").click()
     browser.find_element_by_id("chkAlertStreamAll").click()
-    browser.find_element_by_xpath('//*[@id="alertStreamFilters"]/div/div/div[3]/button[1]').click()
+    # Set filter button
+    # browser.find_element_by_xpath('//*[@id="alertStreamFilters"]/div/div/div[3]/button[1]').click()
+    browser.find_element_by_xpath('/html/body/div[7]/div[3]/button[1]').click()
     browser.find_element_by_id("menuItemOptions").click()
 
     cur_ticker = ""
@@ -76,10 +87,10 @@ def main():
         cur_h = cur_time.hour
         cur_m = cur_time.minute/60
 
-        if cur_h+cur_m <= 9.5 or cur_h+cur_m >= 15.5:
-            print(f"{cur_time}, market not open")
+        if cur_h+cur_m <= 9.5 or cur_h+cur_m >= 16:
+            # print(f"{cur_time}, market not open")
 
-            # email results at end of day
+            # email results at end of day (4 EST)
             if not email_results:
                 email_results = True
                 print("emailing results")
@@ -87,9 +98,13 @@ def main():
                 print("clearing log")
                 os.remove(log_path)
                 print("sleeping")
-                time.sleep(60 * 60 * 17) # sleep overnight
+                # time.sleep(60 * 60 * 17) # sleep overnight
                 # email to james
             time.sleep(5) # sleep for 30 sec while waiting for market open
+            continue
+
+        # don't let it try to buy stocks
+        if cur_h+cur_m >= 15.3:
             continue
 
         email_results = False # if market open again, need to email results
@@ -99,20 +114,20 @@ def main():
             next = browser.find_element_by_xpath(f'//*[@id="alertStreamBody"]/tr[{1}]').text
             next_ticker = next.split()[1]
         except Exception as e:
-            print("search error")
+            # print("search error")
             try:
                 browser.find_element_by_id("loadSymbolOptionsFromMi").clear()
                 browser.find_element_by_xpath('//*[@id="alertStreamFiltered"]/span[1]/a').click()
                 browser.find_element_by_xpath('//*[@id="optionsFiltered"]/span[1]/a').click()
                 updated = 0
             except Exception as e:
-                print("reset error at search")
+                # print("reset error at search")
             continue
 
         if next_ticker != cur_ticker:
             cur_ticker = next_ticker
             updated = 1
-            print(f"getting data for {cur_ticker}")
+            # print(f"getting data for {cur_ticker}")
 
             # filter
             filter = cur_ticker
@@ -141,24 +156,49 @@ def main():
                         if data[8][-1] == 'M':
                             call_vol += float(data[8][1:-1])*1000000
                 except Exception as e:
-                    print(f'get data error for {cur_ticker}')
+                    # print(f'get data error for {cur_ticker}')
                     break
 
             if call_vol+put_vol == 0:
-                print(f"NO VOLUME for {cur_ticker}")
+                # print(f"NO VOLUME for {cur_ticker}")
                 continue
             elif call_vol/(call_vol+put_vol) > .7:
                 # buy, temporary write to file
+                price, vol = query(cur_ticker)
+
+                #shares calculation
+                if price > perTransaction:
+                    shares=1
+                elif perTransaction/price < volPercent*vol:
+                    shares = int(perTransaction/price)
+                else:
+                    shares = int(volPercent*vol)
+
+                # cancel buy if not executed after a minute, if not cancelled (already executed), cancel stop loss after 30 and place sell order
+                try:
+                    # print("buy", shares)
+                    # order_id = buy(cur_ticker, price, shares)
+                    # print("create sell time")
+                    # t_sell = Timer(60, cancel_buy, args=[order_id, cur_ticker, shares])
+                    # print("start sell")
+                    t_sell.start()
+                except Exception as e:
+                    print("TD BUY ERROR")
+                    print(e)
+
+                # log entry for buy
                 file = open(log_path, "a")
-                file.write(f"Buy {cur_ticker} @ {query(cur_ticker)}\n")
+                file.write(f"Buy;{cur_ticker};{price}\n")
                 file.close()
-                print(f"Buy {cur_ticker} @ {query(cur_ticker)}\n")
+                # print(f"Buy;{cur_ticker};{price}\n")
 
                 # sell in 30 mins, temporary write to file
                 t = Timer(time_to_sell, timer_query, args=[cur_ticker])
                 t.start()
+
             else:
-                print(f"call_vol {call_vol}, put_vol {put_vol}, percent {call_vol/(call_vol+put_vol)}")
+                pass
+                # print(f"call_vol {call_vol}, put_vol {put_vol}, percent {call_vol/(call_vol+put_vol)}")
 
         if updated:
             try:
@@ -167,7 +207,8 @@ def main():
                 browser.find_element_by_xpath('//*[@id="optionsFiltered"]/span[1]/a').click()
                 updated = 0
             except Exception as e:
-                print("reset error at reset")
+                # print(e)
+                # print("reset error at reset")
         time.sleep(1)
 
     # browser.find_element_by_id("optionsFilter").click()
@@ -178,12 +219,122 @@ def main():
 
     return 0
 
-def query(symbol):
+# can replace query code
+# replace endpoint with https://api.tdameritrade.com/v1/accounts/{accountId}/orders and your account id
+# important info https://github.com/areed1192/td-ameritrade-python-api/blob/master/td/client.py
+#   _make_request and place_order
+
+def buy(symbol, price, shares):
+    access_token = get_new_access_token()
+    request_session = requests.Session()
+    request_session.verify = True
+    print(shares, access_token)
+    slipAdjust = 0.02
+    minPrice = 10
+    volPercent = 0.10
+    request_request = requests.Request(
+        method='post',
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        },
+        url='https://api.tdameritrade.com/v1/accounts/279053763/orders',  # replace {accountID} with accountId
+        params=None,
+        data=None,
+        json={
+          "orderType": "MARKET",
+          "session": "NORMAL",
+          "duration": "DAY",
+          "orderStrategyType": "SINGLE",
+          "orderLegCollection": [
+            {
+              "instruction": "Buy",
+              "quantity": shares,
+              "instrument": {
+                "symbol": symbol,
+                "assetType": "EQUITY"
+              }
+            }
+          ]
+        }
+
+  # here you put the json for the order
+    ).prepare()
+
+    response: requests.Response = request_session.send(request=request_request)
+
+    request_session.close()
+
+    print(response.status_code)
+    response_headers = response.headers
+    print(response_headers)
+    order_id = response_headers['Location'].split('orders/')[1]
+    return order_id
+
+def stop(symbol, price, shares):
+    access_token = get_new_access_token()
+    request_session = requests.Session()
+    request_session.verify = True
+    print(shares, access_token)
+    slipAdjust = 0.02
+    minPrice = 8
+    stopPercent = 0.998
+    volPercent = 0.10
+    request_request = requests.Request(
+        method='post',
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        },
+        url='https://api.tdameritrade.com/v1/accounts/279053763/orders',  # replace {accountID} with accountId
+        params=None,
+        data=None,
+        json={
+            "orderType": "TRAILING_STOP",
+            "session": "NORMAL",
+            "stopPriceLinkBasis": "BID",
+            "stopPriceLinkType": "VALUE",
+            "stopPriceOffset": round(price-price*stopPercent, 2),
+            "duration": "DAY",
+            "orderStrategyType": "SINGLE",
+            "orderLegCollection": [
+                {
+                    "instruction": "SELL",
+                    "quantity": shares,
+                    "instrument": {
+                        "symbol": symbol,
+                        "assetType": "EQUITY"
+                    }
+                }
+            ]
+        }
+
+  # here you put the json for the order
+    ).prepare()
+
+    response: requests.Response = request_session.send(request=request_request)
+
+    request_session.close()
+
+    print(response.status_code)
+    response_headers = response.headers
+    print(response_headers)
+    order_id = response_headers['Location'].split('orders/')[1]
+    return order_id
+
+def log_query(symbol):
     endpoint = f"https://api.tdameritrade.com/v1/marketdata/{symbol}/quotes"
     payload={'apikey':td_api_key}
     # headers = {'Authorization': }
     content = requests.get(url=endpoint, params=payload).json() #headers=headers
     return content[symbol]['lastPrice']
+
+def query(symbol):
+    endpoint = f"https://api.tdameritrade.com/v1/marketdata/{symbol}/quotes"
+    payload={'apikey':td_api_key}
+    # headers = {'Authorization': }
+    content = requests.get(url=endpoint, params=payload).json() #headers=headers
+    return content[symbol]['lastPrice'], content[symbol]['totalVolume']
 
 def timer_query(symbol):
     endpoint = f"https://api.tdameritrade.com/v1/marketdata/{symbol}/quotes"
@@ -193,7 +344,7 @@ def timer_query(symbol):
     last_price = content[symbol]['lastPrice']
 
     file = open(log_path, "a")
-    file.write(f"Sell {symbol} @ {query(symbol)}\n")
+    file.write(f"Sell;{symbol};{query(symbol)}\n")
     file.close()
 
 def api_call_eg():
@@ -239,7 +390,7 @@ def auth():
 
 def email(file):
     sender_email = "qfthesis2022@gmail.com"
-    dest_email = "qfthesis2022+1@gmail.com"
+    dest_email = "jamesqu3@gmail.com"
     password = email_pass
 
     # create multipart email
@@ -275,6 +426,111 @@ def email(file):
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
         server.login(sender_email, password)
         server.sendmail(sender_email, dest_email, text)
+
+
+def get_new_access_token() -> str:
+    method = 'post'
+    url = 'https://api.tdameritrade.com/v1/oauth2/token'
+    client_code = td_api_key+'@AMER.OAUTHAP'
+
+    body = {
+        'grant_type': 'refresh_token',
+        'refresh_token': refresh_token,
+        'client_id': client_code}
+
+    headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+
+    session = requests.Session()
+
+    request = requests.Request(method=method, headers=headers, url=url, data=body).prepare()
+    response: request.Response = session.send(request=request)
+    return response.json()['access_token']
+
+def cancel(order_id):
+    access_token = get_new_access_token()
+    request_session = requests.Session()
+    request_session.verify = True
+
+    request_request = requests.Request(
+        method='delete',
+        headers={
+            'Authorization': f'Bearer {access_token}'
+        },
+        url=f'https://api.tdameritrade.com/v1/accounts/279053763/orders/{order_id}'
+    ).prepare()
+
+    response: requests.Response = request_session.send(request=request_request)
+
+    request_session.close()
+
+    print(response.status_code)
+    print(response.headers)
+
+    return response.status_code
+
+def timer_sell(ticker, shares):
+    price, vol = query(ticker)
+
+    slipAdjust = 0.02
+    minPrice = 8
+    stopPercent = 0.998
+    volPercent = 0.05
+
+    access_token = get_new_access_token()
+    request_session = requests.Session()
+    request_session.verify = True
+
+    request_request = requests.Request(
+        method='post',
+        headers={
+            'Authorization': f'Bearer {access_token}',
+            'Content-Type': 'application/json'
+        },
+        url='https://api.tdameritrade.com/v1/accounts/279053763/orders',  # replace {accountID} with accountId
+        params=None,
+        data=None,
+        json={
+            "orderType": "LIMIT",
+            "session": "NORMAL",
+            "price": round(price-slipAdjust, 2),
+            "duration": "DAY",
+            "orderStrategyType": "SINGLE",
+            "orderLegCollection": [
+                {
+                    "instruction": "SELL",
+                    "quantity": shares,
+                    "instrument": {
+                    "symbol": ticker,
+                    "assetType": "EQUITY"
+                    }
+                }
+            ]
+        }
+
+        # here you put the json for the order
+    ).prepare()
+
+    response: requests.Response = request_session.send(request=request_request)
+
+    request_session.close()
+
+    print(response.status_code)
+    response_headers = response.headers
+    print(response_headers)
+    order_id = response_headers['Location'].split('orders/')[1]
+    return order_id
+
+def cancel_buy(order_id, ticker, shares):
+    # thirty_min_later = datetime.now() + timedelta(minutes=30)
+    # thirty_min_later = f"{thirty_min_later.year}-{thirty_min_later.month}-{thirty_min_later.day}T{thirty_min_later.hour}:{thirty_min_later.minute}:{thirty_min_later.second}"
+
+    if cancel(order_id) == 400:
+        price, vol = query(ticker)
+        stop_id=stop(ticker,price, shares)
+        t_cancel_stop_loss = Timer(770, cancel, args=[stop_id])
+        t_cancel_stop_loss.start()
+        t_place_sell = Timer(900, timer_sell, args=[ticker, shares])
+        t_place_sell.start()
 
 main()
 # api_call_eg()
